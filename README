@@ -1,0 +1,1 @@
+singleton providing in memory cache for images, and on disk cache for corresponding data
