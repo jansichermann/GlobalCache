@@ -2,7 +2,7 @@
 //  GlobalCache.m
 //
 //  Created by Jan Sichermann on 01/05/13.
-//  Copyright (c) 2013 online in4mation GmbH. All rights reserved.
+//  Copyright (c) 2013 Jan Sichermann. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,12 +18,16 @@
 
 #import "GlobalCache.h"
 
+
 static const int maxDiskCacheSeconds = 8640;
 
+
 @interface GlobalCache ()
-@property (nonatomic, readwrite) NSCache *imageCache;
-@property (nonatomic) NSFileManager *fm;
-@property (atomic) NSMutableArray *bgSaveForPathInProgress;
+
+@property (nonatomic, readwrite)    NSCache         *imageCache;
+@property (nonatomic)               NSFileManager   *fm;
+@property (atomic)                  NSMutableArray  *bgSaveForPathInProgress;
+
 @end
 
 
@@ -50,7 +54,9 @@ static const int maxDiskCacheSeconds = 8640;
 }
 
 - (void)setImage:(UIImage *)image forPath:(NSString *)pathString {
-    [self.imageCache setObject:image forKey:pathString];
+    if (image) {
+        [self.imageCache setObject:image forKey:pathString];
+    }
 }
 
 - (void)setData:(NSData *)data forPath:(NSString *)pathString {
@@ -64,7 +70,7 @@ static const int maxDiskCacheSeconds = 8640;
 }
 
 - (UIImage *)imageForPath:(NSString *)pathString {
-    if ([self.imageCache objectForKey:pathString] != nil) {
+    if ([self.imageCache objectForKey:pathString]) {
         return [self.imageCache objectForKey:pathString];
     }
     
