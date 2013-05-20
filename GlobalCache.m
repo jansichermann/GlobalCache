@@ -26,7 +26,10 @@ static const int maxDiskCacheSeconds = 8640;
 
 @property (nonatomic, readwrite)    NSCache         *imageCache;
 @property (nonatomic)               NSFileManager   *fm;
+
+// while nsmutable array isn't thread safe, we use a lock in order to access it
 @property (atomic)                  NSMutableArray  *bgSaveForPathInProgress;
+@property (atomic)                  NSLock          *savePathArrayLock;
 
 @end
 
@@ -48,6 +51,7 @@ static const int maxDiskCacheSeconds = 8640;
         self.imageCache = [[NSCache alloc] init];
         self.fm = [NSFileManager defaultManager];
         [self.fm createDirectoryAtPath:[self imageCacheDirPath] withIntermediateDirectories:YES attributes:nil error:nil];
+        self.savePathArrayLock = [[NSLock alloc] init];
         self.bgSaveForPathInProgress = [NSMutableArray array];
     }
     return self;
@@ -60,18 +64,31 @@ static const int maxDiskCacheSeconds = 8640;
 }
 
 - (void)setData:(NSData *)data forPath:(NSString *)pathString {
-    if (![self.bgSaveForPathInProgress containsObject:pathString]) {
-        [self.bgSaveForPathInProgress addObject:pathString];
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
-            [data writeToFile:[self cachePathForImagePath:pathString] atomically:YES];
-            [self.bgSaveForPathInProgress removeObject:pathString];
-        });
+    NSAssert(data, @"Expected data");
+    NSAssert(pathString.length > 0, @"Expected pathString");
+    
+    [self.savePathArrayLock lock];
+    BOOL containsObj = [self.bgSaveForPathInProgress containsObject:pathString];
+    
+    if (containsObj) {
+        [self.savePathArrayLock unlock];
+        return;
     }
+    
+    [self.bgSaveForPathInProgress addObject:pathString];
+    [self.savePathArrayLock unlock];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+        [data writeToFile:[self cachePathForImagePath:pathString] atomically:YES];
+        [self.savePathArrayLock lock];
+        [self.bgSaveForPathInProgress removeObject:pathString];
+        [self.savePathArrayLock unlock];
+    });
 }
 
 - (UIImage *)imageForPath:(NSString *)pathString {
-    if ([self.imageCache objectForKey:pathString]) {
-        return [self.imageCache objectForKey:pathString];
+    UIImage *image = [self _imageInMemoryCacheForPath:pathString];
+    if (image) {
+        return image;
     }
     
     if ([self.fm fileExistsAtPath:[self cachePathForImagePath:pathString]]) {
@@ -80,17 +97,24 @@ static const int maxDiskCacheSeconds = 8640;
         NSDate *modDate = [fileAttributes objectForKey:NSFileModificationDate];
         
         if ( fabs([modDate timeIntervalSinceNow]) < maxDiskCacheSeconds) {
-            
-            UIImage *image = [UIImage imageWithContentsOfFile:[self cachePathForImagePath:pathString]];
+            image = [UIImage imageWithData:[self _dataForPath:pathString]];
             [self setImage:image forPath:pathString];
-            return image;
         }
         else {
             // cache out of date
-            [self.fm removeItemAtPath:[self cachePathForImagePath:pathString] error:nil];
+            [self.fm removeItemAtPath:[self cachePathForImagePath:pathString]
+                                error:nil];
         }
     }
-    return nil;
+    return image;
+}
+
+- (UIImage *)_imageInMemoryCacheForPath:(NSString *)pathString {
+    return [self.imageCache objectForKey:pathString];
+}
+
+- (NSData *)_dataForPath:(NSString *)pathString {
+    return [NSData dataWithContentsOfFile:[self cachePathForImagePath:pathString]];
 }
 
 - (NSString *)cachePathForImagePath:(NSString *)imagePath {
@@ -98,7 +122,9 @@ static const int maxDiskCacheSeconds = 8640;
 }
 
 - (NSString *)cachesDirectory {
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory,
+                                                         NSUserDomainMask,
+                                                         YES);
     return [paths lastObject];
 }
 
@@ -108,7 +134,6 @@ static const int maxDiskCacheSeconds = 8640;
 - (NSString *)imageCacheDirPath {
     return [[self cachesDirectory] stringByAppendingPathComponent:@"images"];
 }
-
 
 - (NSString *)escapeString:(NSString *)string {
     NSString *result = (__bridge NSString *)CFURLCreateStringByAddingPercentEscapes(
